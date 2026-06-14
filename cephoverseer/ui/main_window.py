@@ -15,7 +15,7 @@ class MainWindow(QMainWindow):
         
         # Currently selected entity key
         self.current_selection_key = None
-        self.last_cluster_state = None
+        self.last_clusters_state = []
 
         # Main central widget and layout
         self.central_widget = QWidget()
@@ -71,19 +71,21 @@ class MainWindow(QMainWindow):
         self.status_bar = self.statusBar()
         self.status_bar.showMessage("Ready")
 
-    def update_ui_with_data(self, cluster_state):
+    def update_ui_with_data(self, clusters_state):
         """
         Slot called by the background worker when new data arrives.
         """
-        self.last_cluster_state = cluster_state
+        self.last_clusters_state = clusters_state
 
-        # Update Status Bar with Health
-        health_color = "green" if cluster_state.telemetry.health_status == "HEALTH_OK" else ("orange" if "WARN" in cluster_state.telemetry.health_status else "red")
-        self.status_bar.showMessage(f"Cluster: {cluster_state.name} | Status: {cluster_state.telemetry.health_status}")
-        self.status_bar.setStyleSheet(f"color: {health_color}; font-weight: bold;")
+        # Update Status Bar with Health of the first cluster for now (or a combined state)
+        if clusters_state:
+            cluster = clusters_state[0]
+            health_color = "green" if cluster.telemetry.health_status == "HEALTH_OK" else ("orange" if "WARN" in cluster.telemetry.health_status else "red")
+            self.status_bar.showMessage(f"Cluster: {cluster.name} | Status: {cluster.telemetry.health_status} (+ {len(clusters_state)-1} more)")
+            self.status_bar.setStyleSheet(f"color: {health_color}; font-weight: bold;")
 
         # Update the Tree View using QStandardItemModel
-        self.tree_builder.update_tree(cluster_state)
+        self.tree_builder.update_tree(clusters_state)
         
         # Expand tree on first load
         if not self._initial_expand_done:
@@ -98,35 +100,47 @@ class MainWindow(QMainWindow):
         """
         Updates the real-time graph depending on what is selected in the tree view.
         """
-        if not self.last_cluster_state:
+        if not self.last_clusters_state:
             return
 
-        cluster = self.last_cluster_state
         new_val = 0
         title = "Live Telemetry"
 
         key = self.current_selection_key
         if not key or key.startswith("cluster_"):
-            # Default or Cluster Selected: Show Cluster IOPS
-            new_val = cluster.telemetry.total_iops
-            title = f"Live Telemetry (Cluster IOPS: {new_val})"
+            cluster_name = key.split("cluster_")[1] if key else self.last_clusters_state[0].name
+            for cluster in self.last_clusters_state:
+                if cluster.name == cluster_name:
+                    new_val = cluster.telemetry.total_iops
+                    title = f"Live Telemetry ({cluster.name} Total IOPS: {new_val})"
+                    break
         elif key.startswith("host_"):
-            # Host Selected: Show CPU Usage
-            hostname = key.split("host_")[1]
-            for host in cluster.hosts:
-                if host.name == hostname:
-                    new_val = host.cpu_usage
-                    title = f"Live Telemetry ({host.name} CPU Usage %)"
+            # Format: host_{cluster_name}_{hostname}
+            parts = key.split("_")
+            cluster_name = parts[1]
+            hostname = "_".join(parts[2:])
+            for cluster in self.last_clusters_state:
+                if cluster.name == cluster_name:
+                    for host in cluster.hosts:
+                        if host.name == hostname:
+                            new_val = host.cpu_usage
+                            title = f"Live Telemetry ({host.name} CPU Usage: {new_val:.1f}%)"
+                            break
                     break
         elif key.startswith("osd_"):
-            # OSD Selected: Show Utilization
-            osd_id = int(key.split("osd_")[1])
-            for host in cluster.hosts:
-                for osd in host.osds:
-                    if osd.id == osd_id:
-                        new_val = osd.utilization_percent
-                        title = f"Live Telemetry ({osd.name} Utilization %)"
-                        break
+            # Format: osd_{cluster_name}_{osd_id}
+            parts = key.split("_")
+            cluster_name = parts[1]
+            osd_id = int(parts[2])
+            for cluster in self.last_clusters_state:
+                if cluster.name == cluster_name:
+                    for host in cluster.hosts:
+                        for osd in host.osds:
+                            if osd.id == osd_id:
+                                new_val = osd.utilization_percent
+                                title = f"Live Telemetry ({osd.name} Utilization: {new_val:.1f}%)"
+                                break
+                    break
 
         self.graph_widget.setTitle(title)
 
@@ -158,61 +172,82 @@ class MainWindow(QMainWindow):
                 self.update_graph_context()
 
     def update_details_table(self):
-        if not self.last_cluster_state or not self.current_selection_key:
+        if not self.last_clusters_state or not self.current_selection_key:
             return
             
         data_to_show = {}
         key = self.current_selection_key
-        cluster = self.last_cluster_state
+        
+        # Helper to find cluster by name
+        def get_cluster(name):
+            for c in self.last_clusters_state:
+                if c.name == name:
+                    return c
+            return None
         
         if key.startswith("cluster_"):
-            data_to_show = {
-                "Name": cluster.name,
-                "Prometheus URL": cluster.prometheus_url,
-                "MGR URL": cluster.mgr_url,
-                "Health Status": cluster.telemetry.health_status,
-                "Total IOPS": cluster.telemetry.total_iops,
-                "Read Bytes/sec": f"{cluster.telemetry.read_bytes_sec / 1024**2:.2f} MB/s",
-                "Write Bytes/sec": f"{cluster.telemetry.write_bytes_sec / 1024**2:.2f} MB/s",
-                "Active PGs": cluster.telemetry.active_pgs
-            }
+            cluster_name = key.split("cluster_")[1]
+            cluster = get_cluster(cluster_name)
+            if cluster:
+                data_to_show = {
+                    "Name": cluster.name,
+                    "Prometheus URL": cluster.prometheus_url,
+                    "MGR URL": cluster.mgr_url,
+                    "Health Status": cluster.telemetry.health_status,
+                    "Total IOPS": cluster.telemetry.total_iops,
+                    "Read Bytes/sec": f"{cluster.telemetry.read_bytes_sec / 1024**2:.2f} MB/s",
+                    "Write Bytes/sec": f"{cluster.telemetry.write_bytes_sec / 1024**2:.2f} MB/s",
+                    "Active PGs": cluster.telemetry.active_pgs
+                }
         elif key.startswith("host_"):
-            hostname = key.split("host_")[1]
-            for host in cluster.hosts:
-                if host.name == hostname:
-                    data_to_show = {
-                        "Hostname": host.name,
-                        "IP Address": host.ip,
-                        "CPU Usage": f"{host.cpu_usage:.1f}%",
-                        "RAM Usage": f"{host.ram_usage:.1f}%",
-                        "OSDs Count": len(host.osds)
-                    }
-                    break
-        elif key.startswith("osd_"):
-            osd_id = int(key.split("osd_")[1])
-            for host in cluster.hosts:
-                for osd in host.osds:
-                    if osd.id == osd_id:
+            parts = key.split("_")
+            cluster_name = parts[1]
+            hostname = "_".join(parts[2:])
+            cluster = get_cluster(cluster_name)
+            if cluster:
+                for host in cluster.hosts:
+                    if host.name == hostname:
                         data_to_show = {
-                            "OSD ID": osd.id,
-                            "Name": osd.name,
-                            "Status": osd.status,
-                            "In Cluster": osd.in_cluster,
-                            "Weight": osd.weight,
-                            "Utilization": f"{osd.utilization_percent:.2f}%",
-                            "Host": host.name
+                            "Hostname": host.name,
+                            "IP Address": host.ip,
+                            "CPU Usage": f"{host.cpu_usage:.1f}%",
+                            "RAM Usage": f"{host.ram_usage:.1f}%",
+                            "OSDs Count": len(host.osds)
                         }
                         break
+        elif key.startswith("osd_"):
+            parts = key.split("_")
+            cluster_name = parts[1]
+            osd_id = int(parts[2])
+            cluster = get_cluster(cluster_name)
+            if cluster:
+                for host in cluster.hosts:
+                    for osd in host.osds:
+                        if osd.id == osd_id:
+                            data_to_show = {
+                                "OSD ID": osd.id,
+                                "Name": osd.name,
+                                "Status": osd.status,
+                                "In Cluster": osd.in_cluster,
+                                "Weight": osd.weight,
+                                "Utilization": f"{osd.utilization_percent:.2f}%",
+                                "Host": host.name
+                            }
+                            break
         elif key.startswith("pool_"):
-            pool_id = int(key.split("pool_")[1])
-            for pool in cluster.pools:
-                if pool.id == pool_id:
-                    data_to_show = {
-                        "Pool ID": pool.id,
-                        "Name": pool.name,
-                        "PG Num": pool.pg_num,
-                        "Used Space": f"{pool.used_bytes / 1024**3:.2f} GB"
-                    }
-                    break
+            parts = key.split("_")
+            cluster_name = parts[1]
+            pool_id = int(parts[2])
+            cluster = get_cluster(cluster_name)
+            if cluster:
+                for pool in cluster.pools:
+                    if pool.id == pool_id:
+                        data_to_show = {
+                            "Pool ID": pool.id,
+                            "Name": pool.name,
+                            "PG Num": pool.pg_num,
+                            "Used Space": f"{pool.used_bytes / 1024**3:.2f} GB"
+                        }
+                        break
                     
         self.table_builder.update_with_dict(data_to_show)
