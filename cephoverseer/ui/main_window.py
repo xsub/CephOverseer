@@ -41,16 +41,16 @@ class MainWindow(QMainWindow):
         self.splitter.addWidget(self.right_pane)
 
         # 2a. Top Right: PyQtGraph
-        self.graph_widget = pg.PlotWidget(title="Live Telemetry (IOPS)")
+        self.graph_widget = pg.PlotWidget(title="Live Telemetry (Cluster IOPS)")
         self.graph_widget.setBackground('w')
         self.graph_widget.showGrid(x=True, y=True)
         self.right_layout.addWidget(self.graph_widget)
 
-        # Set up a plot data line
+        # Set up plot data lines for different contexts
         self.time_data = []
-        self.iops_data = []
+        self.graph_data_1 = [] # E.g., Total IOPS or CPU
         self.data_line = self.graph_widget.plot(
-            self.time_data, self.iops_data, pen=pg.mkPen(color=(0, 114, 178), width=2)
+            self.time_data, self.graph_data_1, pen=pg.mkPen(color=(0, 114, 178), width=2)
         )
 
         # 2b. Bottom Right: Details/Properties Table
@@ -82,19 +82,6 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage(f"Cluster: {cluster_state.name} | Status: {cluster_state.telemetry.health_status}")
         self.status_bar.setStyleSheet(f"color: {health_color}; font-weight: bold;")
 
-        # Update Graph (Simulate a rolling window of 60 data points)
-        self.iops_data.append(cluster_state.telemetry.total_iops)
-        if len(self.time_data) == 0:
-            self.time_data.append(0)
-        else:
-            self.time_data.append(self.time_data[-1] + 1)
-            
-        if len(self.iops_data) > 60:
-            self.iops_data = self.iops_data[-60:]
-            self.time_data = self.time_data[-60:]
-            
-        self.data_line.setData(self.time_data, self.iops_data)
-
         # Update the Tree View using QStandardItemModel
         self.tree_builder.update_tree(cluster_state)
         
@@ -103,16 +90,72 @@ class MainWindow(QMainWindow):
             self.tree_view.expandAll()
             self._initial_expand_done = True
             
-        # Update details table if something is selected
+        # Update details table and graph context if something is selected
         self.update_details_table()
+        self.update_graph_context()
+
+    def update_graph_context(self):
+        """
+        Updates the real-time graph depending on what is selected in the tree view.
+        """
+        if not self.last_cluster_state:
+            return
+
+        cluster = self.last_cluster_state
+        new_val = 0
+        title = "Live Telemetry"
+
+        key = self.current_selection_key
+        if not key or key.startswith("cluster_"):
+            # Default or Cluster Selected: Show Cluster IOPS
+            new_val = cluster.telemetry.total_iops
+            title = f"Live Telemetry (Cluster IOPS: {new_val})"
+        elif key.startswith("host_"):
+            # Host Selected: Show CPU Usage
+            hostname = key.split("host_")[1]
+            for host in cluster.hosts:
+                if host.name == hostname:
+                    new_val = host.cpu_usage
+                    title = f"Live Telemetry ({host.name} CPU Usage %)"
+                    break
+        elif key.startswith("osd_"):
+            # OSD Selected: Show Utilization
+            osd_id = int(key.split("osd_")[1])
+            for host in cluster.hosts:
+                for osd in host.osds:
+                    if osd.id == osd_id:
+                        new_val = osd.utilization_percent
+                        title = f"Live Telemetry ({osd.name} Utilization %)"
+                        break
+
+        self.graph_widget.setTitle(title)
+
+        # Update Graph Data Arrays (Simulate a rolling window of 60 data points)
+        self.graph_data_1.append(new_val)
+        if len(self.time_data) == 0:
+            self.time_data.append(0)
+        else:
+            self.time_data.append(self.time_data[-1] + 1)
+            
+        if len(self.graph_data_1) > 60:
+            self.graph_data_1 = self.graph_data_1[-60:]
+            self.time_data = self.time_data[-60:]
+            
+        self.data_line.setData(self.time_data, self.graph_data_1)
 
     def on_tree_selection_changed(self, selected, deselected):
         indexes = selected.indexes()
         if indexes:
             item_data = indexes[0].data(Qt.UserRole)
             if item_data:
+                # If we change selection, clear the graph history to avoid jumping charts
+                if self.current_selection_key != item_data:
+                    self.time_data.clear()
+                    self.graph_data_1.clear()
+
                 self.current_selection_key = item_data
                 self.update_details_table()
+                self.update_graph_context()
 
     def update_details_table(self):
         if not self.last_cluster_state or not self.current_selection_key:
