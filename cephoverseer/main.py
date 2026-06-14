@@ -3,18 +3,23 @@ import qasync
 from PyQt5.QtWidgets import QApplication
 from cephoverseer.ui.main_window import MainWindow
 from cephoverseer.workers.polling_worker import PollingWorker
+from cephoverseer.models.config import ConfigManager
 
 async def main_async(app: QApplication):
     """
     The asynchronous main function.
     Initializes the UI and background workers, then integrates them.
     """
+    # Load configuration
+    config_manager = ConfigManager()
+
     main_window = MainWindow()
     main_window.show()
 
     # Initialize the Polling Worker
     # Note: We run start_polling() as an asyncio task, keeping it non-blocking
-    worker = PollingWorker(interval_seconds=1.5)
+    worker = PollingWorker(config_manager=config_manager, interval_seconds=1.5)
+
     
     # Connect signals from worker to UI slots
     worker.data_fetched.connect(main_window.update_ui_with_data)
