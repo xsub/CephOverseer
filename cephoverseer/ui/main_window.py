@@ -1,9 +1,10 @@
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QSplitter, QTreeView, QTableView, QLabel
+    QSplitter, QTreeView, QTableView, QLabel, QHeaderView
 )
 from PyQt5.QtCore import Qt
 import pyqtgraph as pg
+from cephoverseer.ui.tree_model import ClusterTreeBuilder
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -21,8 +22,12 @@ class MainWindow(QMainWindow):
         self.layout.addWidget(self.splitter)
 
         # 1. Left Pane: Explorer Tree View
+        self.tree_builder = ClusterTreeBuilder()
         self.tree_view = QTreeView()
-        self.tree_view.setHeaderHidden(True)
+        self.tree_view.setModel(self.tree_builder.get_model())
+        self.tree_view.setHeaderHidden(False)
+        # Auto-expand initially
+        self._initial_expand_done = False
         self.splitter.addWidget(self.tree_view)
 
         # 2. Right Pane: Split vertically (Top: Graphs, Bottom: Details)
@@ -76,4 +81,10 @@ class MainWindow(QMainWindow):
             
         self.data_line.setData(self.time_data, self.iops_data)
 
-        # TODO: Update the Tree View and Table View using QAbstractItemModels
+        # Update the Tree View using QStandardItemModel
+        self.tree_builder.update_tree(cluster_state)
+        
+        # Expand tree on first load
+        if not self._initial_expand_done:
+            self.tree_view.expandAll()
+            self._initial_expand_done = True
