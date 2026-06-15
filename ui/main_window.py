@@ -1,21 +1,29 @@
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QSplitter, QTreeView, QTableView, QLabel, QHeaderView
+    QSplitter, QTreeView, QTableView, QLabel, QHeaderView, QAction, QMenuBar, QDialog
 )
-from PyQt5.QtCore import Qt, QItemSelectionModel
+from PyQt5.QtCore import Qt, QItemSelectionModel, pyqtSignal
 import pyqtgraph as pg
 from ui.tree_model import ClusterTreeBuilder
 from ui.table_model import DetailsTableBuilder
+from ui.settings_dialog import SettingsDialog
+from models.config import ConfigManager
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    # Signal to tell main.py that settings changed and worker needs a restart
+    settings_changed = pyqtSignal()
+
+    def __init__(self, config_manager: ConfigManager):
         super().__init__()
         self.setWindowTitle("CephOverseer")
         self.resize(1200, 800)
+        self.config_manager = config_manager
         
         # Currently selected entity key
         self.current_selection_key = None
         self.last_clusters_state = []
+
+        self._init_menu()
 
         # Main central widget and layout
         self.central_widget = QWidget()
@@ -70,6 +78,24 @@ class MainWindow(QMainWindow):
         # Status Bar
         self.status_bar = self.statusBar()
         self.status_bar.showMessage("Ready")
+
+    def _init_menu(self):
+        menubar = self.menuBar()
+        file_menu = menubar.addMenu("File")
+        
+        settings_action = QAction("Settings...", self)
+        settings_action.triggered.connect(self.open_settings)
+        file_menu.addAction(settings_action)
+        
+        exit_action = QAction("Exit", self)
+        exit_action.triggered.connect(self.close)
+        file_menu.addAction(exit_action)
+
+    def open_settings(self):
+        dialog = SettingsDialog(self.config_manager, self)
+        if dialog.exec_() == QDialog.Accepted:
+            # Settings were saved, we should tell the worker to restart
+            self.settings_changed.emit()
 
     def update_ui_with_data(self, clusters_state):
         """
