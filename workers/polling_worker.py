@@ -15,13 +15,14 @@ class PollingWorker(QObject):
     # Signal emitted when new cluster data is fetched
     data_fetched = pyqtSignal(list) # Emits a list of CephClusters
     error_occurred = pyqtSignal(str)
+    log_event = pyqtSignal(str) # Emits log messages to the UI
 
-    def __init__(self, config_manager: ConfigManager, interval_seconds: float = 5.0, use_mock: bool = True):
+    def __init__(self, config_manager: ConfigManager, interval_seconds: float = 5.0):
         super().__init__()
         self.interval = interval_seconds
         self.config_manager = config_manager
         self._is_running = False
-        self.use_mock = use_mock
+        self.use_mock = self.config_manager.use_simulation
         
         # Clients dictionary mapping cluster_name -> (PrometheusClient, CephMgrClient)
         self.clients = {}
@@ -36,6 +37,7 @@ class PollingWorker(QObject):
             prom_client = PrometheusClient(base_url=cfg.prometheus_url)
             mgr_client = CephMgrClient(base_url=cfg.mgr_url, username=cfg.username, password=cfg.password)
             self.clients[cfg.name] = (prom_client, mgr_client)
+            self.log_event.emit(f"Initialized API clients for cluster: {cfg.name}")
 
     async def start_polling(self):
         """
@@ -46,6 +48,7 @@ class PollingWorker(QObject):
             try:
                 if self.use_mock:
                     clusters_state = await self.mock_client.fetch_state()
+                    self.log_event.emit("Fetched mock cluster state successfully.")
                 else:
                     clusters_state = await self._fetch_real_state()
                 
@@ -53,6 +56,7 @@ class PollingWorker(QObject):
                 self.data_fetched.emit(clusters_state)
             except Exception as e:
                 self.error_occurred.emit(str(e))
+                self.log_event.emit(f"Error fetching state: {e}")
                 
             # Wait for next poll interval
             await asyncio.sleep(self.interval)
@@ -146,7 +150,9 @@ class PollingWorker(QObject):
                 
                 clusters.append(cluster)
             except Exception as e:
-                print(f"Error fetching real state for {cfg.name}: {e}")
+                err_msg = f"Error fetching real state for {cfg.name}: {e}"
+                print(err_msg)
+                self.log_event.emit(err_msg)
 
         return clusters
 

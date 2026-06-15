@@ -38,7 +38,7 @@ class CephMgrClient:
             self.token = None
             return False
 
-    async def _request(self, method: str, endpoint: str) -> Any:
+    async def _request(self, method: str, endpoint: str, json_data: dict = None) -> Any:
         """
         Helper method to make authenticated requests. Automatically handles token retrieval.
         """
@@ -51,11 +51,13 @@ class CephMgrClient:
             "Accept": "application/vnd.ceph.api.v1.0+json",
             "Authorization": f"Bearer {self.token}"
         }
+        if json_data:
+            headers["Content-Type"] = "application/json"
         
         url = f"{self.api_url}/{endpoint.lstrip('/')}"
         
         try:
-            response = await self.client.request(method, url, headers=headers)
+            response = await self.client.request(method, url, headers=headers, json=json_data)
             
             # If token expired, retry once
             if response.status_code == 401:
@@ -63,7 +65,7 @@ class CephMgrClient:
                 success = await self._authenticate()
                 if success:
                     headers["Authorization"] = f"Bearer {self.token}"
-                    response = await self.client.request(method, url, headers=headers)
+                    response = await self.client.request(method, url, headers=headers, json=json_data)
             
             response.raise_for_status()
             return response.json()
@@ -104,3 +106,10 @@ class CephMgrClient:
         if isinstance(res, list):
             return res
         return res.get("pools", []) if isinstance(res, dict) else []
+
+    async def set_osd_status(self, osd_id: int, action: str) -> bool:
+        """
+        Set OSD status (e.g., action="out", "in", "down").
+        """
+        res = await self._request("POST", f"/osd/{osd_id}/mark", json_data={"action": action})
+        return bool(res)

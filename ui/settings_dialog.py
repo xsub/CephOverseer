@@ -1,6 +1,6 @@
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QListWidget, QFormLayout, 
-    QLineEdit, QPushButton, QMessageBox, QGroupBox, QWidget
+    QLineEdit, QPushButton, QMessageBox, QGroupBox, QWidget, QCheckBox
 )
 from PyQt5.QtCore import Qt
 from models.config import ConfigManager, ClusterConfig
@@ -13,13 +13,13 @@ class SettingsDialog(QDialog):
         
         self.config_manager = config_manager
         
-        # Keep a local working copy of clusters to avoid saving prematurely
+        # Keep a local working copy
         self._working_clusters = []
         for c in self.config_manager.clusters:
-            # We copy them so edits don't apply immediately to live config
             self._working_clusters.append(
                 ClusterConfig(c.name, c.prometheus_url, c.mgr_url, c.username, c.password)
             )
+        self._working_use_sim = self.config_manager.use_simulation
 
         self.init_ui()
         self.refresh_list()
@@ -73,14 +73,20 @@ class SettingsDialog(QDialog):
         form_layout.addRow("Username (MGR):", self.edit_user)
         form_layout.addRow("Password (MGR):", self.edit_pass)
 
-        # Bottom Buttons
+        # Bottom Buttons & Sim Toggle
         action_btn_layout = QHBoxLayout()
+        
+        self.chk_sim = QCheckBox("Run in Simulation Mode (Mock Data)")
+        self.chk_sim.setChecked(self._working_use_sim)
+        self.chk_sim.stateChanged.connect(lambda state: setattr(self, '_working_use_sim', state == Qt.Checked))
+        
         self.btn_save = QPushButton("Save && Apply")
         self.btn_cancel = QPushButton("Cancel")
         
         self.btn_save.clicked.connect(self.on_save)
         self.btn_cancel.clicked.connect(self.reject)
         
+        action_btn_layout.addWidget(self.chk_sim)
         action_btn_layout.addStretch()
         action_btn_layout.addWidget(self.btn_cancel)
         action_btn_layout.addWidget(self.btn_save)
@@ -161,5 +167,6 @@ class SettingsDialog(QDialog):
             
         # Apply working list to actual ConfigManager
         self.config_manager.clusters = self._working_clusters
+        self.config_manager.use_simulation = self._working_use_sim
         self.config_manager.save_config()
         self.accept()

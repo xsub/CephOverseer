@@ -22,6 +22,7 @@ class ConfigManager:
         self.config_dir = Path.home() / ".cephoverseer"
         self.config_file = self.config_dir / config_file
         self.clusters: List[ClusterConfig] = []
+        self.use_simulation: bool = True
         self.load_config()
 
     def load_config(self):
@@ -33,9 +34,11 @@ class ConfigManager:
             with open(self.config_file, 'r') as f:
                 data = json.load(f)
                 self.clusters = [ClusterConfig(**c) for c in data.get("clusters", [])]
+                self.use_simulation = data.get("use_simulation", True)
         except Exception as e:
             print(f"Failed to load config: {e}. Using defaults.")
             self.clusters = []
+            self.use_simulation = True
 
     def _create_default_config(self):
         """Creates a dummy configuration file for first-time users."""
@@ -49,13 +52,19 @@ class ConfigManager:
         ]
         
         with open(self.config_file, 'w') as f:
-            json.dump({"clusters": [asdict(c) for c in default_clusters]}, f, indent=4)
+            json.dump({
+                "use_simulation": True,
+                "clusters": [asdict(c) for c in default_clusters]
+            }, f, indent=4)
 
     def save_config(self):
         """Saves current cluster list to disk."""
         self.config_dir.mkdir(parents=True, exist_ok=True)
         with open(self.config_file, 'w') as f:
-            json.dump({"clusters": [asdict(c) for c in self.clusters]}, f, indent=4)
+            json.dump({
+                "use_simulation": self.use_simulation,
+                "clusters": [asdict(c) for c in self.clusters]
+            }, f, indent=4)
 
     def add_cluster(self, cluster: ClusterConfig):
         self.clusters.append(cluster)

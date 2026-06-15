@@ -1,6 +1,6 @@
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QSplitter, QTreeView, QTableView, QLabel, QHeaderView, QAction, QMenuBar, QDialog
+    QSplitter, QTreeView, QTableView, QLabel, QHeaderView, QAction, QMenuBar, QDialog, QTextEdit, QDockWidget, QMenu, QMessageBox
 )
 from PyQt5.QtCore import Qt, QItemSelectionModel, pyqtSignal
 import pyqtgraph as pg
@@ -12,6 +12,8 @@ from models.config import ConfigManager
 class MainWindow(QMainWindow):
     # Signal to tell main.py that settings changed and worker needs a restart
     settings_changed = pyqtSignal()
+    # Signal for administrative actions
+    osd_action_requested = pyqtSignal(str, int, str)
 
     def __init__(self, config_manager: ConfigManager):
         super().__init__()
@@ -39,6 +41,8 @@ class MainWindow(QMainWindow):
         self.tree_view = QTreeView()
         self.tree_view.setModel(self.tree_builder.get_model())
         self.tree_view.setHeaderHidden(False)
+        self.tree_view.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tree_view.customContextMenuRequested.connect(self.on_tree_context_menu)
         # Auto-expand initially
         self._initial_expand_done = False
         self.splitter.addWidget(self.tree_view)
@@ -74,6 +78,14 @@ class MainWindow(QMainWindow):
         
         # Connect Selection Changed Event on the Tree View
         self.tree_view.selectionModel().selectionChanged.connect(self.on_tree_selection_changed)
+
+        # 3. Bottom Pane: Logging Console (DockWidget)
+        self.log_dock = QDockWidget("Events Console", self)
+        self.log_dock.setAllowedAreas(Qt.BottomDockWidgetArea)
+        self.log_console = QTextEdit()
+        self.log_console.setReadOnly(True)
+        self.log_dock.setWidget(self.log_console)
+        self.addDockWidget(Qt.BottomDockWidgetArea, self.log_dock)
         
         # Status Bar
         self.status_bar = self.statusBar()
@@ -96,6 +108,14 @@ class MainWindow(QMainWindow):
         if dialog.exec_() == QDialog.Accepted:
             # Settings were saved, we should tell the worker to restart
             self.settings_changed.emit()
+
+    def log_event(self, message: str):
+        """
+        Appends a message to the logging console with a timestamp.
+        """
+        import datetime
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+        self.log_console.append(f"[{timestamp}] {message}")
 
     def update_ui_with_data(self, clusters_state):
         """
@@ -182,6 +202,52 @@ class MainWindow(QMainWindow):
             self.time_data = self.time_data[-60:]
             
         self.data_line.setData(self.time_data, self.graph_data_1)
+
+    def on_tree_context_menu(self, position):
+        indexes = self.tree_view.selectedIndexes()
+        if not indexes:
+            return
+            
+        index = indexes[0]
+        item_data = index.data(Qt.UserRole)
+        
+        if not item_data or not item_data.startswith("osd_"):
+            return
+            
+        # Format: osd_{cluster_name}_{osd_id}
+        parts = item_data.split("_")
+        cluster_name = parts[1]
+        osd_id = int(parts[2])
+        
+        menu = QMenu()
+        mark_out_action = menu.addAction(f"Mark OSD.{osd_id} OUT")
+        mark_in_action = menu.addAction(f"Mark OSD.{osd_id} IN")
+        menu.addSeparator()
+        mark_down_action = menu.addAction(f"Mark OSD.{osd_id} DOWN")
+
+        action = menu.exec_(self.tree_view.viewport().mapToGlobal(position))
+        
+        if action:
+            cmd = ""
+            if action == mark_out_action: cmd = "out"
+            elif action == mark_in_action: cmd = "in"
+            elif action == mark_down_action: cmd = "down"
+            
+            if cmd:
+                self.trigger_osd_action(cluster_name, osd_id, cmd)
+
+    def trigger_osd_action(self, cluster_name: str, osd_id: int, action: str):
+        reply = QMessageBox.question(
+            self, 'Confirm Action',
+            f"Are you sure you want to mark osd.{osd_id} '{action}' in cluster '{cluster_name}'?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+
+        if reply == QMessageBox.Yes:
+            self.log_event(f"Action requested: Mark osd.{osd_id} '{action}' via MGR API...")
+            # Ideally this triggers the worker to do an async call. 
+            # We emit a signal that the main loop can catch and route to the specific MGR Client.
+            self.osd_action_requested.emit(cluster_name, osd_id, action)
 
     def on_tree_selection_changed(self, selected, deselected):
         indexes = selected.indexes()
