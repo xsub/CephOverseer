@@ -4,7 +4,7 @@ from PyQt5.QtCore import QObject, pyqtSignal
 from api.prometheus_client import PrometheusClient
 from api.ceph_mgr_client import CephMgrClient
 from api.mock_client import MockAPIClient
-from models.dataclasses import CephCluster
+from models.dataclasses import CephCluster, Host, OSD, Pool
 from models.config import ConfigManager
 
 class PollingWorker(QObject):
@@ -91,8 +91,58 @@ class PollingWorker(QObject):
                 cluster.telemetry.active_pgs = pgs
                 cluster.telemetry.health_status = health
 
-                # TODO: Fetch Hosts/OSDs/Pools from MGR API
-                # For now, append without hosts just to show telemetry working
+                # Fetch Hosts/OSDs/Pools from MGR API concurrently
+                mgr_hosts_task = asyncio.create_task(mgr_client.get_hosts())
+                mgr_osds_task = asyncio.create_task(mgr_client.get_osds())
+                mgr_pools_task = asyncio.create_task(mgr_client.get_pools())
+
+                mgr_hosts, mgr_osds, mgr_pools = await asyncio.gather(
+                    mgr_hosts_task, mgr_osds_task, mgr_pools_task
+                )
+
+                # Process Pools
+                parsed_pools = []
+                for p_dict in mgr_pools:
+                    # Depending on MGR version, fields might slightly differ
+                    p_id = p_dict.get('pool', p_dict.get('pool_id', 0))
+                    p_name = p_dict.get('pool_name', p_dict.get('name', f"pool_{p_id}"))
+                    p_pg = p_dict.get('pg_num', 0)
+                    p_used = p_dict.get('stats', {}).get('bytes_used', 0)
+                    parsed_pools.append(Pool(id=p_id, name=p_name, pg_num=p_pg, used_bytes=p_used))
+                cluster.pools = parsed_pools
+
+                # Process Hosts and map OSDs
+                parsed_hosts = []
+                for h_dict in mgr_hosts:
+                    h_name = h_dict.get('hostname', 'unknown')
+                    # Find all OSDs that belong to this host
+                    # MGR /osd endpoint usually includes the server name or we map it from the CRUSH tree. 
+                    # For simplicity, we filter the flat OSD list if 'server' matches
+                    host_osds = []
+                    for o_dict in mgr_osds:
+                        o_server = o_dict.get('server', '')
+                        if o_server == h_name:
+                            o_id = o_dict.get('osd', 0)
+                            o_up = "up" if o_dict.get('up', 0) == 1 else "down"
+                            o_in = bool(o_dict.get('in', 0))
+                            o_weight = o_dict.get('weight', 0.0)
+                            o_util = o_dict.get('stats', {}).get('stat_bytes_used', 0) / max(1, o_dict.get('stats', {}).get('stat_bytes', 1)) * 100
+                            host_osds.append(OSD(id=o_id, name=f"osd.{o_id}", status=o_up, in_cluster=o_in, weight=o_weight, utilization_percent=o_util))
+                            
+                    parsed_hosts.append(Host(name=h_name, ip="", osds=host_osds))
+                
+                # If the MGR didn't return host mapping correctly, just lump OSDs into a dummy host
+                if not parsed_hosts and mgr_osds:
+                    dummy_osds = []
+                    for o_dict in mgr_osds:
+                        o_id = o_dict.get('osd', 0)
+                        o_up = "up" if o_dict.get('up', 0) == 1 else "down"
+                        o_in = bool(o_dict.get('in', 0))
+                        o_util = o_dict.get('stats', {}).get('stat_bytes_used', 0) / max(1, o_dict.get('stats', {}).get('stat_bytes', 1)) * 100
+                        dummy_osds.append(OSD(id=o_id, name=f"osd.{o_id}", status=o_up, in_cluster=o_in, weight=0.0, utilization_percent=o_util))
+                    parsed_hosts.append(Host(name="all_nodes", ip="", osds=dummy_osds))
+
+                cluster.hosts = parsed_hosts
                 
                 clusters.append(cluster)
             except Exception as e:
