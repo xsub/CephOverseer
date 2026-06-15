@@ -68,21 +68,36 @@ class PollingWorker(QObject):
             if not prom_client or not mgr_client:
                 continue
 
-            # Fetch Telemetry from Prometheus
-            total_iops = await prom_client.get_total_iops()
-            # Fetch other metrics... (implementing these inside prometheus_client)
+            try:
+                # Concurrently fetch all telemetry metrics from Prometheus
+                iops, (read_bw, write_bw), pgs, health = await asyncio.gather(
+                    prom_client.get_total_iops(),
+                    prom_client.get_bandwidth_bytes_sec(),
+                    prom_client.get_active_pgs(),
+                    prom_client.get_health_status()
+                )
 
-            # Reconstruct the Cluster model
-            cluster = CephCluster(
-                name=cfg.name,
-                prometheus_url=cfg.prometheus_url,
-                mgr_url=cfg.mgr_url,
-            )
-            cluster.telemetry.total_iops = total_iops
-            # Add fetched hosts/osds data here...
+                # Reconstruct the Cluster model
+                cluster = CephCluster(
+                    name=cfg.name,
+                    prometheus_url=cfg.prometheus_url,
+                    mgr_url=cfg.mgr_url,
+                )
+                
+                # Apply telemetry
+                cluster.telemetry.total_iops = int(iops)
+                cluster.telemetry.read_bytes_sec = int(read_bw)
+                cluster.telemetry.write_bytes_sec = int(write_bw)
+                cluster.telemetry.active_pgs = pgs
+                cluster.telemetry.health_status = health
 
-            clusters.append(cluster)
-        
+                # TODO: Fetch Hosts/OSDs/Pools from MGR API
+                # For now, append without hosts just to show telemetry working
+                
+                clusters.append(cluster)
+            except Exception as e:
+                print(f"Error fetching real state for {cfg.name}: {e}")
+
         return clusters
 
     async def stop(self):
