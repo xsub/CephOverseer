@@ -1,9 +1,9 @@
 import sys
 import qasync
 from PyQt5.QtWidgets import QApplication
-from cephoverseer.ui.main_window import MainWindow
-from cephoverseer.workers.polling_worker import PollingWorker
-from cephoverseer.models.config import ConfigManager
+from ui.main_window import MainWindow
+from workers.polling_worker import PollingWorker
+from models.config import ConfigManager
 
 async def main_async(app: QApplication):
     """

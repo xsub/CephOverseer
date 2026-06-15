@@ -1,11 +1,11 @@
 import asyncio
 from typing import List
 from PyQt5.QtCore import QObject, pyqtSignal
-from cephoverseer.api.prometheus_client import PrometheusClient
-from cephoverseer.api.ceph_mgr_client import CephMgrClient
-from cephoverseer.api.mock_client import MockAPIClient
-from cephoverseer.models.dataclasses import CephCluster
-from cephoverseer.models.config import ConfigManager
+from api.prometheus_client import PrometheusClient
+from api.ceph_mgr_client import CephMgrClient
+from api.mock_client import MockAPIClient
+from models.dataclasses import CephCluster
+from models.config import ConfigManager
 
 class PollingWorker(QObject):
     """

@@ -4,8 +4,8 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QItemSelectionModel
 import pyqtgraph as pg
-from cephoverseer.ui.tree_model import ClusterTreeBuilder
-from cephoverseer.ui.table_model import DetailsTableBuilder
+from ui.tree_model import ClusterTreeBuilder
+from ui.table_model import DetailsTableBuilder
 
 class MainWindow(QMainWindow):
     def __init__(self):

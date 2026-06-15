@@ -1,6 +1,6 @@
 from PyQt5.QtGui import QStandardItemModel, QStandardItem
 from PyQt5.QtCore import Qt
-from cephoverseer.models.dataclasses import CephCluster
+from models.dataclasses import CephCluster
 
 from typing import List
 

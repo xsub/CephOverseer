@@ -1,8 +1,8 @@
 import asyncio
 import random
 from typing import List
-from cephoverseer.models.dataclasses import CephCluster, Host, OSD, Pool, ClusterTelemetry
-from cephoverseer.models.config import ConfigManager
+from models.dataclasses import CephCluster, Host, OSD, Pool, ClusterTelemetry
+from models.config import ConfigManager
 
 class MockAPIClient:
     """
