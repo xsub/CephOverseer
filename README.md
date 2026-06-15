@@ -9,3 +9,18 @@ Unlike traditional web-based dashboards, CephOverseer provides a snappy, low-lat
 * **Multi-Cluster Support:** Manage and monitor disparately located Ceph clusters from a single pane of glass.
 * **Deep Explorer View:** Drill down instantly from Clusters ➔ Hosts ➔ OSDs ➔ PGs.
 * **Real-Time Telemetry:** Live, rolling graphs of IOPS, bandwidth, and latency using PromQL asynchronous polling.
+
+## Tech Stack
+* Python 3.10+
+* PyQt5
+* PyQtGraph
+* httpx (Async HTTP)
+* qasync (Asyncio + PyQt5 Event Loop integration)
+
+## Quick Start
+```bash
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+python -m cephoverseer.main
+```
