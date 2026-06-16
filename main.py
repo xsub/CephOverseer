@@ -52,6 +52,35 @@ async def main_async(app: QApplication):
             
         polling_task = asyncio.create_task(worker.start_polling())
 
+    def perform_pool_action(cluster_name: str, pool_name: str, prop: str, value: int):
+        main_window.log_event(f"Executing set {prop}={value} on pool '{pool_name}' in {cluster_name}...")
+        
+        async def do_action():
+            if worker.use_mock:
+                import asyncio
+                await asyncio.sleep(0.5)
+                main_window.log_event(f"[Mock] Successfully set {prop}={value} on pool '{pool_name}'")
+                return
+
+            client_tuple = worker.clients.get(cluster_name)
+            if client_tuple and client_tuple[1]:
+                mgr_client = client_tuple[1]
+                try:
+                    success = await mgr_client.update_pool(pool_name, {prop: value})
+                    if success:
+                        main_window.log_event(f"Successfully updated pool '{pool_name}'")
+                    else:
+                        main_window.log_event(f"Failed to update pool '{pool_name}'")
+                except Exception as e:
+                    main_window.log_event(f"Error updating pool '{pool_name}': {e}")
+            else:
+                main_window.log_event(f"Error: MGR Client not found for {cluster_name}")
+
+        import asyncio
+        asyncio.create_task(do_action())
+
+    main_window.pool_action_requested.connect(perform_pool_action)
+
     def perform_osd_action(cluster_name: str, osd_id: int, action: str):
         main_window.log_event(f"Executing '{action}' on osd.{osd_id} in {cluster_name}...")
         

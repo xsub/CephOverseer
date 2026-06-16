@@ -1,6 +1,6 @@
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QSplitter, QTreeView, QTableView, QLabel, QHeaderView, QAction, QMenuBar, QDialog, QTextEdit, QDockWidget, QMenu, QMessageBox
+    QSplitter, QTreeView, QTableView, QLabel, QHeaderView, QAction, QMenuBar, QDialog, QTextEdit, QDockWidget, QMenu, QMessageBox, QSystemTrayIcon, QInputDialog
 )
 from PyQt5.QtCore import Qt, QItemSelectionModel, pyqtSignal
 import pyqtgraph as pg
@@ -14,6 +14,7 @@ class MainWindow(QMainWindow):
     settings_changed = pyqtSignal()
     # Signal for administrative actions
     osd_action_requested = pyqtSignal(str, int, str)
+    pool_action_requested = pyqtSignal(str, str, str, int)
 
     def __init__(self, config_manager: ConfigManager):
         super().__init__()
@@ -52,18 +53,33 @@ class MainWindow(QMainWindow):
         self.right_layout = QVBoxLayout(self.right_pane)
         self.splitter.addWidget(self.right_pane)
 
-        # 2a. Top Right: PyQtGraph
-        self.graph_widget = pg.PlotWidget(title="Live Telemetry (Cluster IOPS)")
-        self.graph_widget.setBackground('w')
-        self.graph_widget.showGrid(x=True, y=True)
-        self.right_layout.addWidget(self.graph_widget)
+        # Desktop Notifications
+        self.cluster_health_states = {}
+        self.tray_icon = QSystemTrayIcon(self)
+        self.tray_icon.setIcon(self.style().standardIcon(self.style().SP_ComputerIcon))
+        self.tray_icon.show()
 
-        # Set up plot data lines for different contexts
+        # 2a. Top Right: PyQtGraph GraphicsLayoutWidget for Multiple Charts
+        self.graph_layout = pg.GraphicsLayoutWidget()
+        self.graph_layout.setBackground('w')
+        self.right_layout.addWidget(self.graph_layout)
+
+        self.plot_iops = self.graph_layout.addPlot(title="Total IOPS")
+        self.plot_iops.showGrid(x=True, y=True)
+        self.graph_layout.nextRow()
+        self.plot_bw = self.graph_layout.addPlot(title="Bandwidth (MB/s)")
+        self.plot_bw.showGrid(x=True, y=True)
+        self.plot_bw.addLegend()
+
+        # Set up plot data lines
         self.time_data = []
-        self.graph_data_1 = [] # E.g., Total IOPS or CPU
-        self.data_line = self.graph_widget.plot(
-            self.time_data, self.graph_data_1, pen=pg.mkPen(color=(0, 114, 178), width=2)
-        )
+        self.iops_data = []
+        self.read_bw_data = []
+        self.write_bw_data = []
+        
+        self.line_iops = self.plot_iops.plot(pen=pg.mkPen(color=(0, 114, 178), width=2))
+        self.line_read_bw = self.plot_bw.plot(pen=pg.mkPen(color=(0, 158, 115), width=2), name="Read")
+        self.line_write_bw = self.plot_bw.plot(pen=pg.mkPen(color=(213, 94, 0), width=2), name="Write")
 
         # 2b. Bottom Right: Details/Properties Table
         self.table_builder = DetailsTableBuilder()
@@ -123,6 +139,18 @@ class MainWindow(QMainWindow):
         """
         self.last_clusters_state = clusters_state
 
+        # Desktop Notifications for Health State
+        for cluster in clusters_state:
+            old_status = self.cluster_health_states.get(cluster.name, "HEALTH_OK")
+            new_status = cluster.telemetry.health_status
+            if old_status != new_status and new_status in ["HEALTH_WARN", "HEALTH_ERR"]:
+                self.tray_icon.showMessage(
+                    "CephOverseer Alert", 
+                    f"Cluster '{cluster.name}' transitioned to {new_status}", 
+                    QSystemTrayIcon.Warning, 5000
+                )
+            self.cluster_health_states[cluster.name] = new_status
+
         # Update Status Bar with Health of the first cluster for now (or a combined state)
         if clusters_state:
             cluster = clusters_state[0]
@@ -149,19 +177,33 @@ class MainWindow(QMainWindow):
         if not self.last_clusters_state:
             return
 
-        new_val = 0
-        title = "Live Telemetry"
+        iops_val = 0
+        read_bw_val = 0
+        write_bw_val = 0
+        title_iops = "Total IOPS"
+        title_bw = "Bandwidth (MB/s)"
 
         key = self.current_selection_key
-        if not key or key.startswith("cluster_"):
-            cluster_name = key.split("cluster_")[1] if key else self.last_clusters_state[0].name
+        
+        # Cross-Cluster Federation View (Root selected or nothing)
+        if not key:
+            iops_val = sum(c.telemetry.total_iops for c in self.last_clusters_state)
+            read_bw_val = sum(c.telemetry.read_bytes_sec for c in self.last_clusters_state) / 1024**2
+            write_bw_val = sum(c.telemetry.write_bytes_sec for c in self.last_clusters_state) / 1024**2
+            title_iops = f"Federated IOPS: {iops_val}"
+            title_bw = f"Federated Bandwidth: R={read_bw_val:.1f} W={write_bw_val:.1f} MB/s"
+            
+        elif key.startswith("cluster_"):
+            cluster_name = key.split("cluster_")[1]
             for cluster in self.last_clusters_state:
                 if cluster.name == cluster_name:
-                    new_val = cluster.telemetry.total_iops
-                    title = f"Live Telemetry ({cluster.name} Total IOPS: {new_val})"
+                    iops_val = cluster.telemetry.total_iops
+                    read_bw_val = cluster.telemetry.read_bytes_sec / 1024**2
+                    write_bw_val = cluster.telemetry.write_bytes_sec / 1024**2
+                    title_iops = f"{cluster.name} IOPS: {iops_val}"
+                    title_bw = f"{cluster.name} Bandwidth: R={read_bw_val:.1f} W={write_bw_val:.1f} MB/s"
                     break
         elif key.startswith("host_"):
-            # Format: host_{cluster_name}_{hostname}
             parts = key.split("_")
             cluster_name = parts[1]
             hostname = "_".join(parts[2:])
@@ -169,12 +211,13 @@ class MainWindow(QMainWindow):
                 if cluster.name == cluster_name:
                     for host in cluster.hosts:
                         if host.name == hostname:
-                            new_val = host.cpu_usage
-                            title = f"Live Telemetry ({host.name} CPU Usage: {new_val:.1f}%)"
+                            iops_val = host.cpu_usage
+                            read_bw_val = host.ram_usage
+                            title_iops = f"{host.name} CPU Usage: {iops_val:.1f}%"
+                            title_bw = f"{host.name} RAM Usage: {read_bw_val:.1f}%"
                             break
                     break
         elif key.startswith("osd_"):
-            # Format: osd_{cluster_name}_{osd_id}
             parts = key.split("_")
             cluster_name = parts[1]
             osd_id = int(parts[2])
@@ -183,25 +226,49 @@ class MainWindow(QMainWindow):
                     for host in cluster.hosts:
                         for osd in host.osds:
                             if osd.id == osd_id:
-                                new_val = osd.utilization_percent
-                                title = f"Live Telemetry ({osd.name} Utilization: {new_val:.1f}%)"
+                                iops_val = osd.utilization_percent
+                                title_iops = f"{osd.name} Utilization: {iops_val:.1f}%"
+                                title_bw = f"{osd.name} Weight: {osd.weight}"
+                                read_bw_val = osd.weight
                                 break
                     break
+        elif key.startswith("pool_"):
+            parts = key.split("_")
+            cluster_name = parts[1]
+            pool_id = int(parts[2])
+            for cluster in self.last_clusters_state:
+                if cluster.name == cluster_name:
+                    for pool in cluster.pools:
+                        if pool.id == pool_id:
+                            iops_val = pool.used_bytes / 1024**3
+                            read_bw_val = pool.pg_num
+                            title_iops = f"{pool.name} Used Space: {iops_val:.1f} GB"
+                            title_bw = f"{pool.name} PGs: {read_bw_val}"
+                            break
+                    break
 
-        self.graph_widget.setTitle(title)
+        self.plot_iops.setTitle(title_iops)
+        self.plot_bw.setTitle(title_bw)
 
-        # Update Graph Data Arrays (Simulate a rolling window of 60 data points)
-        self.graph_data_1.append(new_val)
+        # Update Arrays
         if len(self.time_data) == 0:
             self.time_data.append(0)
         else:
             self.time_data.append(self.time_data[-1] + 1)
             
-        if len(self.graph_data_1) > 60:
-            self.graph_data_1 = self.graph_data_1[-60:]
-            self.time_data = self.time_data[-60:]
+        self.iops_data.append(iops_val)
+        self.read_bw_data.append(read_bw_val)
+        self.write_bw_data.append(write_bw_val)
             
-        self.data_line.setData(self.time_data, self.graph_data_1)
+        if len(self.time_data) > 60:
+            self.time_data = self.time_data[-60:]
+            self.iops_data = self.iops_data[-60:]
+            self.read_bw_data = self.read_bw_data[-60:]
+            self.write_bw_data = self.write_bw_data[-60:]
+            
+        self.line_iops.setData(self.time_data, self.iops_data)
+        self.line_read_bw.setData(self.time_data, self.read_bw_data)
+        self.line_write_bw.setData(self.time_data, self.write_bw_data)
 
     def on_tree_context_menu(self, position):
         indexes = self.tree_view.selectedIndexes()
@@ -211,30 +278,58 @@ class MainWindow(QMainWindow):
         index = indexes[0]
         item_data = index.data(Qt.UserRole)
         
-        if not item_data or not item_data.startswith("osd_"):
+        if not item_data:
             return
             
-        # Format: osd_{cluster_name}_{osd_id}
-        parts = item_data.split("_")
-        cluster_name = parts[1]
-        osd_id = int(parts[2])
-        
         menu = QMenu()
-        mark_out_action = menu.addAction(f"Mark OSD.{osd_id} OUT")
-        mark_in_action = menu.addAction(f"Mark OSD.{osd_id} IN")
-        menu.addSeparator()
-        mark_down_action = menu.addAction(f"Mark OSD.{osd_id} DOWN")
-
-        action = menu.exec_(self.tree_view.viewport().mapToGlobal(position))
         
-        if action:
-            cmd = ""
-            if action == mark_out_action: cmd = "out"
-            elif action == mark_in_action: cmd = "in"
-            elif action == mark_down_action: cmd = "down"
+        if item_data.startswith("osd_"):
+            parts = item_data.split("_")
+            cluster_name = parts[1]
+            osd_id = int(parts[2])
             
-            if cmd:
-                self.trigger_osd_action(cluster_name, osd_id, cmd)
+            mark_out_action = menu.addAction(f"Mark OSD.{osd_id} OUT")
+            mark_in_action = menu.addAction(f"Mark OSD.{osd_id} IN")
+            menu.addSeparator()
+            mark_down_action = menu.addAction(f"Mark OSD.{osd_id} DOWN")
+
+            action = menu.exec_(self.tree_view.viewport().mapToGlobal(position))
+            
+            if action:
+                cmd = ""
+                if action == mark_out_action: cmd = "out"
+                elif action == mark_in_action: cmd = "in"
+                elif action == mark_down_action: cmd = "down"
+                
+                if cmd:
+                    self.trigger_osd_action(cluster_name, osd_id, cmd)
+                    
+        elif item_data.startswith("pool_"):
+            parts = item_data.split("_")
+            cluster_name = parts[1]
+            pool_id = int(parts[2])
+            
+            # Find pool name
+            pool_name = ""
+            for c in self.last_clusters_state:
+                if c.name == cluster_name:
+                    for p in c.pools:
+                        if p.id == pool_id:
+                            pool_name = p.name
+                            break
+                    break
+            
+            if not pool_name:
+                return
+                
+            set_pg_action = menu.addAction(f"Set PG Num for '{pool_name}'...")
+            action = menu.exec_(self.tree_view.viewport().mapToGlobal(position))
+            
+            if action == set_pg_action:
+                new_pg, ok = QInputDialog.getInt(self, "Set PG Num", f"New PG count for {pool_name}:", 128, 1, 32768, 1)
+                if ok:
+                    self.log_event(f"Action requested: Set pool '{pool_name}' pg_num to {new_pg}...")
+                    self.pool_action_requested.emit(cluster_name, pool_name, "pg_num", new_pg)
 
     def trigger_osd_action(self, cluster_name: str, osd_id: int, action: str):
         reply = QMessageBox.question(
@@ -257,7 +352,9 @@ class MainWindow(QMainWindow):
                 # If we change selection, clear the graph history to avoid jumping charts
                 if self.current_selection_key != item_data:
                     self.time_data.clear()
-                    self.graph_data_1.clear()
+                    self.iops_data.clear()
+                    self.read_bw_data.clear()
+                    self.write_bw_data.clear()
 
                 self.current_selection_key = item_data
                 self.update_details_table()

@@ -113,3 +113,10 @@ class CephMgrClient:
         """
         res = await self._request("POST", f"/osd/{osd_id}/mark", json_data={"action": action})
         return bool(res)
+
+    async def update_pool(self, pool_name: str, payload: dict) -> bool:
+        """
+        Update pool properties (e.g. pg_num).
+        """
+        res = await self._request("PUT", f"/pool/{pool_name}", json_data=payload)
+        return res is not None
