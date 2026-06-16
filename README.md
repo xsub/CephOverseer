@@ -4,7 +4,9 @@
 ![PyQt5](https://img.shields.io/badge/PyQt5-GUI-green.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
-**CephOverseer** is an open-source, native desktop application designed for storage architects and operators to monitor, explore, and visualize multiple Ceph clusters in real-time. 
+**CephOverseer** is an open-source, native desktop application designed for storage architects and operators to monitor, explore, and visualize multiple Ceph clusters in real-time.
+
+![CephOverseer Screenshot](screenshot.png) 
 
 Unlike traditional web-based dashboards, CephOverseer provides a snappy, low-latency IDE-style tree explorer and high-performance live graphing. It directly leverages the **Prometheus HTTP API** and the **Ceph MGR REST API** to aggregate and display granular metrics across clusters, hosts, OSDs, and pools without the overhead of a browser.
 
